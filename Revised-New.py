@@ -118,7 +118,7 @@ def compute_actor_scores(heatmap_matrix):
     for actor in heatmap_matrix.index:
         actor_data = heatmap_matrix.loc[actor]
         total_activity = actor_data.sum()
-        breadth = len(actor_data[actor_data >= 5])
+        breadth = len(actor_data[actor_data > 0])
         active_techniques = actor_data[actor_data > 0]
         intensity = active_techniques.mean() if len(active_techniques) > 0 else 0
         composite_score = (total_activity * 0.5) + (breadth * 0.3) + (intensity * 0.2)
@@ -203,6 +203,9 @@ def process_file(file_path):
 
 def prepare_all_datasets():
     """Load all available threat datasets"""
+    print("🔍 Debug: Checking for Excel files...")
+    print("Current working directory:", os.getcwd())
+    print("Files in directory:", [f for f in os.listdir('.') if f.endswith('.xlsx')])
     file_patterns = [
         'T1-Identification-of-IoT-User.xlsx',
         'T2-Identification-of-IoT-device.xlsx',
@@ -225,14 +228,15 @@ def prepare_all_datasets():
             if result:
                 datasets[result['filename']] = result
                 print(f"✅ Loaded: {result['filename']} with {len(result['all_actors'])} actors")
-    
+        else:       
+            print(f"❌ File not found: {file_path}")
     return datasets
 
 #########################################
 # NETWORK LAYOUT & DYNAMIC PHASE PLACEMENT
 #########################################
 
-def create_optimized_network_layout(critical_paths, phases, all_actors, top_3_actors, vertical_spacing=4.0):
+def create_optimized_network_layout(critical_paths, phases, all_actors, top_3_actors, vertical_spacing=6.0):
     """Create network graph with optimized layout for all actors"""
     G = nx.DiGraph()
     
@@ -261,7 +265,7 @@ def create_optimized_network_layout(critical_paths, phases, all_actors, top_3_ac
                    frequency=0,
                    actor=actor,
                    is_top_3=actor in top_3_actors)
-        pos[f"Actor_{actor}"] = (-8, i * vertical_spacing)  # Left positioning like Revised-Dashboard
+        pos[f"Actor_{actor}"] = (-8, i * vertical_spacing*1.2)  # Left positioning like Revised-Dashboard
     
     # Add technique nodes with smart positioning
     for phase_idx, phase in enumerate(phases):
@@ -277,6 +281,7 @@ def create_optimized_network_layout(critical_paths, phases, all_actors, top_3_ac
         # Calculate optimal vertical distribution
         total_nodes = len(phase_techniques_all)
         if total_nodes > 0:
+            enhanced_spacing = vertical_spacing * 1.5  # ← Add multiplier for more space
             start_y = -(total_nodes - 1) * vertical_spacing / 2
             
             for node_idx, (actor, entry) in enumerate(phase_techniques_all):
@@ -332,12 +337,21 @@ def create_optimized_network_layout(critical_paths, phases, all_actors, top_3_ac
 
 def get_dynamic_spacing(num_visible_actors):
     """Adjust spacing depending on how many actors are shown"""
+    base_spacing = 6.0
+    max_spacing = 15.0
+    
+    # Progressive scaling for large datasets
     if num_visible_actors <= 3:
-        return 4.0
-    elif num_visible_actors <= 6:
         return 6.0
-    else:
+    elif num_visible_actors <= 6:
         return 8.0
+    elif num_visible_actors <= 10:
+        return 10.0
+    else:
+        # Scale up spacing for large datasets like T11/T12
+        scaling_factor = 1 + (num_visible_actors - 10) * 0.3
+        calculated_spacing = base_spacing * scaling_factor
+        return min(calculated_spacing, max_spacing)
 
 def get_annotation_y_offset(pos, actors, phases):
     """Places phase labels just above the topmost node currently visible"""
@@ -346,7 +360,12 @@ def get_annotation_y_offset(pos, actors, phases):
         for actor in actors:
             if f"{actor}_" in node or f"Actor_{actor}" == node:
                 all_y.append(y)
-    return (max(all_y)+4) if all_y else 2
+    if all_y:
+        # Larger buffer for datasets with many actors
+        buffer = 8 if len(actors) > 6 else 6
+        return max(all_y) + buffer
+    return 4
+    #return (max(all_y)+4) if all_y else 2
 
 def plot_optimized_interactive_network_enhanced_labels(G, pos, color_map, all_actors, top_3_actors, visible_actors, filename, phases):
     """Plot interactive network with streamlined approach from Revised-Dashboard"""
@@ -383,7 +402,7 @@ def plot_optimized_interactive_network_enhanced_labels(G, pos, color_map, all_ac
         edge_traces.append(edge_trace)
     
     # Create node traces
-    fixed_node_size = 40
+    fixed_node_size = 25
     for actor in all_actors:
         if actor not in visible_actors:
             continue
@@ -456,7 +475,21 @@ def plot_optimized_interactive_network_enhanced_labels(G, pos, color_map, all_ac
     all_traces = edge_traces + node_traces + label_traces
     fig = go.Figure(data=all_traces)
     
+    num_visible_actors = len(visible_actors)
+    min_height = 1000
+    max_height = 2500
+    height_per_actor = 150  # pixels per actor
+    
+    calculated_height = min(max_height, max(min_height, num_visible_actors * height_per_actor))
+    
     # Layout matching Revised-Dashboard style
+    all_y_positions = [y for x, y in pos.values()]
+    if all_y_positions:
+        y_min = min(all_y_positions) - 10
+        y_max = max(all_y_positions) + 15
+        y_range = [y_min, y_max]
+    else:
+        y_range = None
     fig.update_layout(
         title=dict(
             text=f"IoT Privacy Threat Analysis: {filename} | ⭐ = Top 3 Threat Actors | • = Other Actors",
@@ -464,14 +497,14 @@ def plot_optimized_interactive_network_enhanced_labels(G, pos, color_map, all_ac
         ),
         showlegend=True,
         hovermode='closest',
-        margin=dict(b=80, l=120, r=50, t=180),
+        margin=dict(b=80, l=120, r=50, t=250),
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-12, 270]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,range=y_range),
         plot_bgcolor='#f8f9fa',
         paper_bgcolor='white',
         font=dict(family="Arial", size=12, color="#2c3e50"),
         annotations=phase_annotations,
-        height=1000,  # Reduced height like Revised-Dashboard
+        height=calculated_height,  # Reduced height like Revised-Dashboard
         width=2000    # Adjusted width
     )
     
@@ -649,7 +682,14 @@ def update_dashboard(selected_dataset, top3_only):
     
     return fig, info_content
 
+# Expose the Flask server for deployment
+server = app.server
+
 if __name__ == '__main__':
     print(f"\n🎉 Enhanced Dashboard ready with {len(all_datasets)} datasets!")
     print("🚀 Starting optimized dashboard server...")
-    app.run(debug=True, host='127.0.0.1', port=8050)
+    # Modified for deployment
+    app.run_server(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 8050)))
+
+
+
